@@ -82,7 +82,9 @@ public class TeraSortWithSession extends TezExampleBase {
       tezClient.preWarm(PreWarmVertex.createConfigBuilder(tezConf).build());
     }
 
+    long[] results = new long[inputPaths.length];
     for (int i = 0; i < inputPaths.length; ++i) {
+      long start = System.currentTimeMillis();
       DAG dag = TeraSort.createDAG(tezConf, inputPaths[i], outputPaths[i], numPartitions,
           isDisableSplitGrouping(), ("DAG-Iteration-" + i)); // the names of the DAGs must be unique in a session
 
@@ -90,7 +92,15 @@ public class TeraSortWithSession extends TezExampleBase {
       if(runDag(dag, true, LOG) != 0) {
         return -1;
       }
+      long end = System.currentTimeMillis();
+      results[i] = end - start;
     }
+
+    for (int i = 0; i < inputPaths.length; ++i) {
+      System.out.println(i + " : " + results[i] + " msec");
+      LOG.info(i + " : " + results[i] + " msec");
+    }
+
     return 0;
   }
 

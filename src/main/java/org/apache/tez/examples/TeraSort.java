@@ -28,12 +28,16 @@ import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.task.JobContextImpl;
+import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.tez.common.TezRuntimeFrameworkConfigs;
 import org.apache.tez.mapreduce.lib.MRReaderMapReduce;
 import org.apache.tez.mapreduce.partition.MRPartitioner;
 import org.apache.tez.runtime.library.api.KeyValueReader;
 import org.apache.tez.runtime.library.common.comparator.TezTextComparator;
 import org.apache.tez.runtime.library.common.serializer.TezTextSerialization;
+import org.apache.tez.runtime.library.input.OrderedGroupedInputLegacy;
+import org.apache.tez.runtime.library.input.OrderedGroupedKVInput;
+import org.apache.tez.runtime.library.output.OrderedPartitionedKVOutput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -91,7 +95,7 @@ public class TeraSort extends TezExampleBase {
       // without affecting the semantic guarantees of the data type that are represented by
       // the reader and writer.
       // The inputs/outputs are referenced via the names assigned in the DAG.
-      KeyValueWriter kvWriter = (KeyValueWriter) getOutputs().get(TERASORT_REDUCER).getWriter();
+      KeyValueWriter kvWriter = ((OrderedPartitionedKVOutput) getOutputs().get(TERASORT_REDUCER)).getWriter();
       KeyValueReader kvReader = (MRReaderMapReduce) getInputs().get(INPUT).getReader();
       while (kvReader.next()) {
         kvWriter.write(kvReader.getCurrentKey(), kvReader.getCurrentValue());
@@ -115,11 +119,11 @@ public class TeraSort extends TezExampleBase {
       Preconditions.checkArgument(getOutputs().size() == 1);
 
       KeyValueWriter kvWriter = (KeyValueWriter) getOutputs().get(OUTPUT).getWriter();
-      KeyValuesReader kvReader = (KeyValuesReader) getInputs().get(TERASORT_MAPPER).getReader();
+      KeyValuesReader kvReader = ((OrderedGroupedKVInput) getInputs().get(TERASORT_MAPPER)).getReader();
       while (kvReader.next()) {
-        Object k = kvReader.getCurrentKey();
-        Iterable values = kvReader.getCurrentValues();
-        for (Object v : values) {
+        Text k = (Text)kvReader.getCurrentKey();
+        Iterable<Text> values = (Iterable) kvReader.getCurrentValues().iterator();
+        for (Text v : values) {
           kvWriter.write(k, v);
         }
       }
