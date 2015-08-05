@@ -24,25 +24,16 @@ package org.apache.tez.examples;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.net.URI;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.JobContext;
 import org.apache.hadoop.mapreduce.MRJobConfig;
-import org.apache.hadoop.mapreduce.Partitioner;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.util.Tool;
-  import org.apache.hadoop.util.ToolRunner;
+import org.apache.tez.runtime.library.api.Partitioner;
 
-  /**
+/**
    * Generates the sampled split points, launches the job, and waits for it to
    * finish.
    * <p>
@@ -53,11 +44,18 @@ import org.apache.hadoop.util.Tool;
  * A partitioner that splits text keys into roughly equal partitions
  * in a global sorted order.
  */
-public class TotalOrderPartitioner extends Partitioner<Text,Text>
-    implements Configurable {
+public class TotalOrderPartitioner implements Partitioner {
   private TrieNode trie;
   private Text[] splitPoints;
   private Configuration conf;
+
+  public TotalOrderPartitioner(Configuration conf) {
+    setConf(conf);
+  }
+
+  public int getPartition(Object key, Object value, int numPartitions) {
+    return trie.findPartition((Text)key);
+  }
 
   /**
    * A generic trie node
@@ -206,6 +204,7 @@ public class TotalOrderPartitioner extends Partitioner<Text,Text>
   public void setConf(Configuration conf) {
     try {
       FileSystem fs = FileSystem.getLocal(conf);
+      //new Path(fs.getWorkingDirectory(), TeraSort.PARTITION_FILENAME);
       this.conf = conf;
       Path partFile = new Path(TeraSort.PARTITION_FILENAME);
       splitPoints = readPartitions(fs, partFile, conf);
@@ -219,11 +218,5 @@ public class TotalOrderPartitioner extends Partitioner<Text,Text>
     return conf;
   }
 
-  public TotalOrderPartitioner() {
-  }
-
-  public int getPartition(Text key, Text value, int numPartitions) {
-    return trie.findPartition(key);
-  }
 }
 

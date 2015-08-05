@@ -18,7 +18,10 @@ package org.apache.tez.runtime.library.common.serializer;
  * limitations under the License.
  */
 
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.WritableUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.classification.InterfaceAudience.Public;
@@ -73,7 +76,7 @@ public class TezTextSerialization extends Configured implements Serialization<Wr
   public static class TezTextDeserializer extends Configured
       implements Deserializer<Writable> {
     private Class<?> writableClass;
-    private DataInputBuffer dataIn;
+    private DataInputStream dataInputStream;
 
     public TezTextDeserializer(Configuration conf, Class<?> c) {
       setConf(conf);
@@ -81,7 +84,7 @@ public class TezTextSerialization extends Configured implements Serialization<Wr
     }
 
     public void open(InputStream in) {
-      dataIn = (DataInputBuffer) in;
+      dataInputStream = new DataInputStream(in);
     }
 
     public Writable deserialize(Writable w) throws IOException {
@@ -90,13 +93,13 @@ public class TezTextSerialization extends Configured implements Serialization<Wr
         writable = (Text) ReflectionUtils.newInstance(writableClass, getConf());
       }
 
-      writable.set(dataIn.getData(), dataIn.getPosition(), dataIn.getLength() - dataIn
-          .getPosition());
+      writable.readFields(dataInputStream);
       return writable;
     }
 
     public void close() throws IOException {
-      dataIn.close();
+      //dataIn.close();
+      dataInputStream.close();
     }
 
   }
@@ -104,19 +107,20 @@ public class TezTextSerialization extends Configured implements Serialization<Wr
   public static class TezTextSerializer extends Configured implements
       Serializer<Writable> {
 
-    private OutputStream dataOut;
+    private DataOutputStream dataOutputStream;
 
     public void open(OutputStream out) {
-      this.dataOut = out;
+      dataOutputStream = new DataOutputStream(out);
     }
 
     public void serialize(Writable w) throws IOException {
       Text writable = (Text) w;
-      dataOut.write(writable.getBytes(), 0, writable.getLength());
+      writable.write(dataOutputStream);
     }
 
     public void close() throws IOException {
-      dataOut.close();
+      //dataOut.close();
+      dataOutputStream.close();
     }
   }
 }

@@ -20,28 +20,34 @@ package org.apache.tez.examples;
 
 import java.io.IOException;
 
-import java.net.URI;
-import org.apache.hadoop.examples.terasort.TeraInputFormat;
-import org.apache.hadoop.examples.terasort.TeraOutputFormat;
+import java.util.Map;
+import java.util.TreeMap;
+import java.util.UUID;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.mapreduce.Job;
-import org.apache.hadoop.mapreduce.JobContext;
-import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
-import org.apache.hadoop.mapreduce.task.JobContextImpl;
+import org.apache.hadoop.mapreduce.Partitioner;
+import org.apache.hadoop.mapreduce.security.TokenCache;
+import org.apache.hadoop.security.Credentials;
+import org.apache.hadoop.util.ClassUtil;
 import org.apache.hadoop.yarn.api.records.LocalResource;
+import org.apache.hadoop.yarn.api.records.LocalResourceType;
+import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
+import org.apache.hadoop.yarn.util.ConverterUtils;
+import org.apache.tez.client.TezClientUtils;
 import org.apache.tez.common.TezRuntimeFrameworkConfigs;
+import org.apache.tez.dag.api.TezUncheckedException;
 import org.apache.tez.mapreduce.lib.MRReaderMapReduce;
 import org.apache.tez.mapreduce.partition.MRPartitioner;
 import org.apache.tez.runtime.library.api.KeyValueReader;
 import org.apache.tez.runtime.library.common.comparator.TezTextComparator;
 import org.apache.tez.runtime.library.common.serializer.TezTextSerialization;
-import org.apache.tez.runtime.library.input.OrderedGroupedInputLegacy;
 import org.apache.tez.runtime.library.input.OrderedGroupedKVInput;
 import org.apache.tez.runtime.library.output.OrderedPartitionedKVOutput;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.util.ToolRunner;
 import org.apache.tez.client.TezClient;
@@ -52,7 +58,6 @@ import org.apache.tez.dag.api.Edge;
 import org.apache.tez.dag.api.ProcessorDescriptor;
 import org.apache.tez.dag.api.TezConfiguration;
 import org.apache.tez.dag.api.Vertex;
-import org.apache.tez.examples.WordCount.TokenProcessor;
 import org.apache.tez.mapreduce.input.MRInput;
 import org.apache.tez.mapreduce.output.MROutput;
 import org.apache.tez.mapreduce.processor.SimpleMRProcessor;
@@ -122,7 +127,7 @@ public class TeraSort extends TezExampleBase {
       KeyValuesReader kvReader = ((OrderedGroupedKVInput) getInputs().get(TERASORT_MAPPER)).getReader();
       while (kvReader.next()) {
         Text k = (Text)kvReader.getCurrentKey();
-        Iterable<Text> values = (Iterable) kvReader.getCurrentValues().iterator();
+        Iterable<Text> values = (Iterable) kvReader.getCurrentValues();
         for (Text v : values) {
           kvWriter.write(k, v);
         }
@@ -130,26 +135,67 @@ public class TeraSort extends TezExampleBase {
       // deriving from SimpleMRProcessor takes care of committing the output
     }
   }
-  
-  public static DAG createDAG(TezConfiguration tezConf, String inputPath, String outputPath,
-      int numPartitions, boolean disableSplitGrouping, String dagName) throws IOException {
 
-
-    long start = System.currentTimeMillis();
-    Path partitionFile = new Path(outputPath, PARTITION_FILENAME);
-    Job job = Job.getInstance(tezConf);
-    TeraInputFormat.setInputPaths(job, new Path(inputPath));
-    FileOutputFormat.setOutputPath(job, new Path(outputPath));
-    URI partitionUri;
+  public static void createPartitionFile(Configuration conf, Path inputPath,
+      Path partitionFile, int numPartitions) throws IOException {
+    // Dirty hack for reusing TeraInputFormat.writePartitionFile
+    conf.setInt("mapreduce.terasort.num.partitions", numPartitions);
+    //conf.setClass("mapreduce.job.partitioner.class", TotalOrderPartitioner.class,
+    //    Partitioner.class);
+    Job job = Job.getInstance(conf);
+    TeraInputFormat.setInputPaths(job, inputPath);
     try {
-      partitionUri = new URI(partitionFile.toString() + "#" + PARTITION_FILENAME);
-      TeraInputFormat.writePartitionFile(job, partitionFile);
+      TeraInputFormat.writePartitionFile(job, partitionFile, numPartitions);
     } catch (Throwable e) {
       LOG.error(e.getMessage());
       throw new IOException(e);
     }
-    job.addCacheFile(partitionUri);
-    job.setPartitionerClass(TotalOrderPartitioner.class);
+  }
+  
+  public static DAG createDAG(TezConfiguration tezConf, String inputPath, String outputPath,
+      int numPartitions, boolean disableSplitGrouping, String dagName) throws IOException {
+
+    FileSystem fs = FileSystem.get(tezConf);
+    if (fs.exists(new Path(outputPath))) {
+      throw new IOException("Output directory : " + outputPath + " already exists");
+    }
+
+    Path stagingDir = new Path(fs.getWorkingDirectory(), UUID.randomUUID().toString());
+    tezConf.set(TezConfiguration.TEZ_AM_STAGING_DIR, stagingDir.toString());
+    TezClientUtils.ensureStagingDirExists(tezConf, stagingDir);
+
+    String jarPath = ClassUtil.findContainingJar(TeraSort.class);
+    if (jarPath == null) {
+      throw new TezUncheckedException("Could not find any jar containing"
+          + TeraSort.class.getName() + " in the classpath");
+    }
+
+    Credentials credentials = new Credentials();
+    Path remoteJarPath = fs.makeQualified(new Path(stagingDir, "dag_job.jar"));
+    fs.copyFromLocalFile(new Path(jarPath), remoteJarPath);
+    FileStatus remoteJarStatus = fs.getFileStatus(remoteJarPath);
+    TokenCache.obtainTokensForNamenodes(credentials, new Path[]{remoteJarPath}, tezConf);
+
+    Map<String, LocalResource> commonLocalResources = new TreeMap<String, LocalResource>();
+    LocalResource dagJarLocalRsrc = LocalResource
+        .newInstance(ConverterUtils.getYarnUrlFromPath(remoteJarPath), LocalResourceType.FILE,
+            LocalResourceVisibility.APPLICATION, remoteJarStatus.getLen(),
+        remoteJarStatus.getModificationTime());
+    commonLocalResources.put("dag_job.jar", dagJarLocalRsrc);
+
+    long start = System.currentTimeMillis();
+
+    Path partitionFile = new Path(outputPath, PARTITION_FILENAME);
+    createPartitionFile(tezConf, new Path(inputPath), partitionFile, numPartitions);
+    // Registering partitionFile as LocalResources
+    Path remotePartitionFilePath = fs.makeQualified(partitionFile);
+    FileStatus remotePartitionFileStatus = fs.getFileStatus(remotePartitionFilePath);
+    Map<String, LocalResource> terasortLocalResources = new TreeMap<String, LocalResource>();
+    LocalResource partitionFileLocalRsrc = LocalResource.newInstance(
+        ConverterUtils.getYarnUrlFromPath(remotePartitionFilePath), LocalResourceType.FILE,
+        LocalResourceVisibility.APPLICATION, remotePartitionFileStatus.getLen(),
+        remotePartitionFileStatus.getModificationTime());
+    terasortLocalResources.put(PARTITION_FILENAME, partitionFileLocalRsrc);
     long end = System.currentTimeMillis();
     System.out.println("Spent " + (end - start) + "ms computing partitions.");
 
@@ -158,18 +204,20 @@ public class TeraSort extends TezExampleBase {
     DataSourceDescriptor dataSource = MRInput.createConfigBuilder(new Configuration(tezConf),
         TeraInputFormat.class, inputPath).groupSplits(!disableSplitGrouping).build();
 
-    DataSinkDescriptor dataSink = MROutput.createConfigBuilder(new Configuration(tezConf), TeraOutputFormat.class,
-        outputPath).build();
+    DataSinkDescriptor dataSink = MROutput.createConfigBuilder(new Configuration(tezConf),
+        TeraOutputFormat.class, outputPath).build();
 
     Vertex terasortMapVertex = Vertex.create(TERASORT_MAPPER, ProcessorDescriptor.create(
-        TeraSortMapperProcessor.class.getName()));
+        TeraSortMapperProcessor.class.getName()))
+        .addTaskLocalFiles(commonLocalResources)
+        .addTaskLocalFiles(terasortLocalResources);
     terasortMapVertex.addDataSource(INPUT, dataSource);
 
     // Use Text key and IntWritable value to bring counts for each word in the same partition
     // The setFromConfiguration call is optional and allows overriding the config options with
     // command line parameters.
     OrderedPartitionedKVEdgeConfig TeraSortEdgeConf = OrderedPartitionedKVEdgeConfig
-        .newBuilder(Text.class.getName(), Text.class.getName(), MRPartitioner.class.getName())
+        .newBuilder(Text.class.getName(), Text.class.getName(), TotalOrderPartitioner.class.getName())
         .setFromConfiguration(tezConf)
         .setKeySerializationClass(TezTextSerialization.class.getName(), TezTextComparator.class.getName(), null)
         .build();
@@ -177,18 +225,16 @@ public class TeraSort extends TezExampleBase {
     // This vertex will be reading intermediate data via an input edge and writing intermediate data
     // via an output edge.
     Vertex terasortReducerVertex = Vertex.create(TERASORT_REDUCER, ProcessorDescriptor.create(
-        TeraSortReducerProcessor.class.getName()), numPartitions);
+        TeraSortReducerProcessor.class.getName()), numPartitions)
+        .addTaskLocalFiles(commonLocalResources)
+        .addTaskLocalFiles(terasortLocalResources);
     terasortReducerVertex.addDataSink(OUTPUT, dataSink);
 
     // No need to add jar containing this class as assumed to be part of the tez jars.
     DAG dag = DAG.create(dagName);
     dag.addVertex(terasortMapVertex)
-        .addVertex(terasortReducerVertex)
-        .addEdge(Edge.create(terasortMapVertex, terasortReducerVertex, TeraSortEdgeConf.createDefaultEdgeProperty()));
-
-
-
-    //job.setPartitionerClass(TotalOrderPartitioner.class);
+        .addVertex(terasortReducerVertex).addEdge(Edge.create(terasortMapVertex, terasortReducerVertex,
+        TeraSortEdgeConf.createDefaultEdgeProperty()));
 
     return dag;
   }
