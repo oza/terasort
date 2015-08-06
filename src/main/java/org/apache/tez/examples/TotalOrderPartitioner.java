@@ -31,6 +31,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.MRJobConfig;
+import org.apache.tez.common.TezRuntimeFrameworkConfigs;
 import org.apache.tez.runtime.library.api.Partitioner;
 
 /**
@@ -149,7 +150,7 @@ public class TotalOrderPartitioner implements Partitioner {
    */
   private static Text[] readPartitions(FileSystem fs, Path p,
       Configuration conf) throws IOException {
-    int reduces = conf.getInt(MRJobConfig.NUM_REDUCES, 1);
+    int reduces = conf.getInt(TezRuntimeFrameworkConfigs.TEZ_RUNTIME_NUM_EXPECTED_PARTITIONS, 1);
     Text[] result = new Text[reduces - 1];
     DataInputStream reader = fs.open(p);
     for(int i=0; i < reduces - 1; ++i) {

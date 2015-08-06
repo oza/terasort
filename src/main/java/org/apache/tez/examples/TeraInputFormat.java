@@ -126,7 +126,7 @@ public class TeraInputFormat extends FileInputFormat<Text,Text> {
     final List<InputSplit> splits = inFormat.getSplits(job);
     long t2 = System.currentTimeMillis();
     System.out.println("Computing input splits took " + (t2 - t1) + "ms");
-    int samples = Math.min(conf.getInt(NUM_PARTITIONS, 10), splits.size());
+    int samples = Math.min(numPartitions, splits.size());
     System.out.println("Sampling " + samples + " splits of " + splits.size());
     final long recordsPerSample = sampleSize / samples;
     final int sampleStep = splits.size() / samples;

@@ -139,7 +139,7 @@ public class TeraSort extends TezExampleBase {
   public static void createPartitionFile(Configuration conf, Path inputPath,
       Path partitionFile, int numPartitions) throws IOException {
     // Dirty hack for reusing TeraInputFormat.writePartitionFile
-    conf.setInt("mapreduce.terasort.num.partitions", numPartitions);
+    conf.setInt(TeraInputFormat.NUM_PARTITIONS, numPartitions);
     //conf.setClass("mapreduce.job.partitioner.class", TotalOrderPartitioner.class,
     //    Partitioner.class);
     Job job = Job.getInstance(conf);
@@ -216,10 +216,11 @@ public class TeraSort extends TezExampleBase {
     // Use Text key and IntWritable value to bring counts for each word in the same partition
     // The setFromConfiguration call is optional and allows overriding the config options with
     // command line parameters.
-    OrderedPartitionedKVEdgeConfig TeraSortEdgeConf = OrderedPartitionedKVEdgeConfig
+    OrderedPartitionedKVEdgeConfig teraSortEdgeConf = OrderedPartitionedKVEdgeConfig
         .newBuilder(Text.class.getName(), Text.class.getName(), TotalOrderPartitioner.class.getName())
         .setFromConfiguration(tezConf)
         .setKeySerializationClass(TezTextSerialization.class.getName(), TezTextComparator.class.getName(), null)
+        .setValueSerializationClass(TezTextSerialization.class.getName(), null)
         .build();
 
     // This vertex will be reading intermediate data via an input edge and writing intermediate data
@@ -233,8 +234,9 @@ public class TeraSort extends TezExampleBase {
     // No need to add jar containing this class as assumed to be part of the tez jars.
     DAG dag = DAG.create(dagName);
     dag.addVertex(terasortMapVertex)
-        .addVertex(terasortReducerVertex).addEdge(Edge.create(terasortMapVertex, terasortReducerVertex,
-        TeraSortEdgeConf.createDefaultEdgeProperty()));
+        .addVertex(terasortReducerVertex)
+        .addEdge(
+            Edge.create(terasortMapVertex, terasortReducerVertex, teraSortEdgeConf.createDefaultEdgeProperty()));
 
     return dag;
   }
