@@ -18,6 +18,8 @@
 
 package org.apache.tez.examples;
 
+import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.util.Records;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.apache.hadoop.util.ToolRunner;
@@ -54,7 +56,7 @@ public class TeraSortWithSession extends TezExampleBase {
   @Override
   protected int runJob(String[] args, TezConfiguration tezConf,
       TezClient tezClient) throws Exception {
-    System.out.println("Running SimpleSessionExample");
+    System.out.println("Running TeraSortWithSession");
     String[] inputPaths = args[0].split(",");
     String[] outputPaths = args[1].split(",");
     if (inputPaths.length != outputPaths.length) {
@@ -79,7 +81,13 @@ public class TeraSortWithSession extends TezExampleBase {
       // specified using other API's. We know that the OrderedWordCount dag uses default files and
       // resources. Otherwise we would have to specify matching parameters in the preWarm API too.
       tezConf.setInt(TezConfiguration.TEZ_AM_SESSION_MIN_HELD_CONTAINERS, numPartitions);
-      tezClient.preWarm(PreWarmVertex.createConfigBuilder(tezConf).build());
+      Resource capability = Records.newRecord(Resource.class);
+      capability.setMemory(tezConf.getInt(TezConfiguration.TEZ_TASK_RESOURCE_MEMORY_MB,
+          TezConfiguration.TEZ_TASK_RESOURCE_MEMORY_MB_DEFAULT));
+      capability.setVirtualCores(tezConf.getInt(TezConfiguration.TEZ_TASK_RESOURCE_CPU_VCORES, TezConfiguration
+                  .TEZ_TASK_RESOURCE_CPU_VCORES_DEFAULT));
+      tezClient.preWarm(PreWarmVertex.createConfigBuilder(tezConf).setParallelism(numPartitions)
+          .setResource(capability).build());
     }
 
     long[] results = new long[inputPaths.length];
